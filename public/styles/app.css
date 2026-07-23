@@ -1,0 +1,179 @@
+.ambientloop-demo {
+	box-sizing: border-box;
+	max-width: 360px;
+	margin: 24px auto;
+	padding: 0 16px;
+	font-family:
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+}
+
+.ambientloop,
+.ambientloop * {
+	box-sizing: border-box;
+}
+
+.ambientloop {
+	/* 色を変更する場合は、この変数群を調整してください。 */
+	--ambientloop-panel: #ffffff;
+	--ambientloop-text: #25231f;
+	--ambientloop-muted: #6c665c;
+	--ambientloop-border: #d9d2c5;
+	--ambientloop-accent: #2f7d6f;
+	--ambientloop-accent-text: #ffffff;
+	--ambientloop-danger: #a33b3b;
+	--ambientloop-focus: #e2a93b;
+
+	width: 100%;
+	color: var(--ambientloop-text);
+	/* サイト側の本文フォントに合わせたい場合は font-family を変更してください。 */
+	font-family:
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		sans-serif;
+	/* 全体の文字サイズを変更する場合は、ここを調整してください。 */
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.ambientloop__inner {
+	display: grid;
+	/* 各操作ブロック間の余白です。 */
+	gap: 8px;
+}
+
+.ambientloop__field {
+	display: grid;
+	/* ラベルと入力欄の間隔です。 */
+	gap: 4px;
+}
+
+.ambientloop__label {
+	color: var(--ambientloop-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.ambientloop__select,
+.ambientloop__volume {
+	width: 100%;
+	/* タッチ操作しやすい高さです。 */
+	min-height: 40px;
+	margin: 0;
+	font: inherit;
+}
+
+.ambientloop__select {
+	/* プルダウン内側の余白です。 */
+	padding: 8px 10px;
+	border: 1px solid var(--ambientloop-border);
+	/* 入力欄の角丸です。 */
+	border-radius: 6px;
+	background: var(--ambientloop-panel);
+	color: var(--ambientloop-text);
+}
+
+.ambientloop__controls {
+	display: grid;
+	/* 再生ボタンと音量スライダーの横幅バランスです。 */
+	grid-template-columns: minmax(92px, auto) 1fr;
+	align-items: end;
+	gap: 10px;
+}
+
+.ambientloop__button {
+	/* 再生ボタンの高さと余白です。 */
+	min-height: 42px;
+	padding: 9px 12px;
+	border: 0;
+	/* 再生ボタンの角丸です。 */
+	border-radius: 6px;
+	background: var(--ambientloop-accent);
+	color: var(--ambientloop-accent-text);
+	font: inherit;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.ambientloop__button:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+.ambientloop__button:focus-visible,
+.ambientloop__select:focus-visible,
+.ambientloop__volume:focus-visible,
+.ambientloop__details summary:focus-visible {
+	outline: 3px solid var(--ambientloop-focus);
+	outline-offset: 2px;
+}
+
+.ambientloop__volume {
+	accent-color: var(--ambientloop-accent);
+	cursor: pointer;
+}
+
+.ambientloop__details {
+	border-top: 1px solid var(--ambientloop-border);
+	/* 詳細エリアと操作部の間隔です。 */
+	padding-top: 8px;
+	color: var(--ambientloop-muted);
+	font-size: 13px;
+}
+
+.ambientloop__details summary {
+	cursor: pointer;
+	color: var(--ambientloop-text);
+	font-weight: 700;
+}
+
+.ambientloop__detail-list {
+	display: grid;
+	gap: 4px;
+	margin: 8px 0 0;
+}
+
+.ambientloop__detail-row {
+	display: grid;
+	/* 詳細項目のラベル列幅です。 */
+	grid-template-columns: 72px 1fr;
+	gap: 8px;
+}
+
+.ambientloop__detail-term {
+	color: var(--ambientloop-muted);
+	font-weight: 700;
+}
+
+.ambientloop__detail-value {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.ambientloop__link {
+	color: var(--ambientloop-accent);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.ambientloop__message {
+	min-height: 18px;
+	color: var(--ambientloop-danger);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.ambientloop__message:empty {
+	display: none;
+}
+
+@media (max-width: 320px) {
+	.ambientloop__controls {
+		grid-template-columns: 1fr;
+	}
+}

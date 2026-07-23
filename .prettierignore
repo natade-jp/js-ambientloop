@@ -1,0 +1,9 @@
+/node_modules/
+/build/
+/out/
+/html/
+/docs/
+
+*.md
+package.json
+package-lock.json

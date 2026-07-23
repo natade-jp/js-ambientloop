@@ -1,0 +1,10 @@
+/node_modules/
+/npm-debug.log
+/out/
+
+jest.config.js
+.npmrc
+
+.DS_Store
+Thumbs.db
+*.bak

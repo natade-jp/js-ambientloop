@@ -1,0 +1,39 @@
+{
+	"name": "ambientloop",
+	"version": "0.0.1",
+	"description": "",
+	"keywords": [],
+	"author": "natade-jp <natade3@gmail.com> (https://github.com/natade-jp)",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/natade-jp/js-ambientloop.git"
+	},
+	"license": "MIT",
+	"source": "./site/app.js",
+	"type": "module",
+	"scripts": {
+		"build": "node ./scripts/package.build.js",
+		"test": "jest",
+		"test_target": "node ./scripts/package.test.js"
+	},
+	"directories": {
+		"src": "./site",
+		"build": "./site"
+	},
+	"bugs": {
+		"url": "https://github.com/natade-jp/js-ambientloop/issues"
+	},
+	"homepage": "https://github.com/natade-jp/js-ambientloop",
+	"devDependencies": {
+		"@rollup/plugin-commonjs": "^28.0.3",
+		"@rollup/plugin-node-resolve": "^16.0.1",
+		"@rollup/plugin-terser": "^1.0.0",
+		"@types/materialize-css": "^1.0.14",
+		"eslint": "^9.27.0",
+		"eslint-config-prettier": "^10.1.5",
+		"ntfile": "^1.0.0",
+		"prettier": "^3.5.3",
+		"rollup": "^4.40.2",
+		"typescript": "^5.8.3"
+	}
+}
