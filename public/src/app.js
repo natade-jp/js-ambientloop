@@ -19,6 +19,12 @@ const DEFAULT_USER_VOLUME = 0.8;
 const FADE_SCHEDULE_OFFSET_SECONDS = 0.01;
 
 /**
+ * ページ非表示時のフェードアウト秒
+ * @type {number}
+ */
+const PAGE_HIDE_FADE_SECONDS = 0.08;
+
+/**
  * BGM曲情報
  * @typedef {object} BgmTrack
  * @property {string} id 曲ID
@@ -141,6 +147,15 @@ class Ambientloop {
 		this.isPlaying = false;
 		this.isCrossfading = false;
 		this.playGeneration = 0;
+		this.isSuspendingForPageHide = false;
+		this.handleVisibilityChange = () => {
+			if (document.visibilityState === "hidden") {
+				this.suspendForPageHide();
+			}
+		};
+		this.handlePageHide = () => {
+			this.suspendForPageHide();
+		};
 		this.userVolume = this.loadNumber(`${this.storageKey}:volume`, DEFAULT_USER_VOLUME);
 		this.selectedTrackId = this.loadText(`${this.storageKey}:trackId`);
 		this.selectedTrack = this.findInitialTrack();
@@ -275,6 +290,9 @@ class Ambientloop {
 			this.saveNumber(`${this.storageKey}:volume`, this.userVolume);
 			this.applyUserVolume();
 		});
+
+		document.addEventListener("visibilitychange", this.handleVisibilityChange);
+		window.addEventListener("pagehide", this.handlePageHide);
 	}
 
 	/**
@@ -347,10 +365,81 @@ class Ambientloop {
 	destroy() {
 		this.stop();
 		this.root.textContent = "";
+		document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+		window.removeEventListener("pagehide", this.handlePageHide);
+		this.releaseAudioContext();
+	}
+
+	/**
+	 * ページ非表示時の停止
+	 * @returns {void}
+	 */
+	suspendForPageHide() {
+		if (this.isSuspendingForPageHide || (!this.isPlaying && !this.audioContext)) {
+			return;
+		}
+		this.isSuspendingForPageHide = true;
+		this.playGeneration += 1;
+		this.isPlaying = false;
+		this.isCrossfading = false;
+		this.clearLoopTimeouts();
+		this.fadeOutMasterGain(PAGE_HIDE_FADE_SECONDS);
+		this.setFallbackPageHideRelease();
+		window.setTimeout(() => {
+			this.stopVoices();
+			this.releaseAudioContext();
+			this.isSuspendingForPageHide = false;
+			if (Ambientloop.activePlayer === this) {
+				Ambientloop.activePlayer = null;
+			}
+			this.elements.playButton.disabled = false;
+			this.updateUi();
+		}, PAGE_HIDE_FADE_SECONDS * 1000);
+	}
+
+	/**
+	 * ページ非表示時の最終解放予約
+	 * @returns {void}
+	 */
+	setFallbackPageHideRelease() {
+		window.setTimeout(() => {
+			if (!this.isSuspendingForPageHide) {
+				return;
+			}
+			this.stopVoices();
+			this.releaseAudioContext();
+			this.isSuspendingForPageHide = false;
+		}, 500);
+	}
+
+	/**
+	 * マスター音量のフェードアウト
+	 * @param {number} duration フェード秒
+	 * @returns {void}
+	 */
+	fadeOutMasterGain(duration) {
+		if (!this.audioContext || !this.masterGain) {
+			return;
+		}
+		const now = this.audioContext.currentTime;
+		const currentValue = this.masterGain.gain.value;
+		this.masterGain.gain.cancelScheduledValues(0);
+		this.masterGain.gain.setValueAtTime(currentValue, now);
+		this.masterGain.gain.linearRampToValueAtTime(0, now + duration);
+	}
+
+	/**
+	 * AudioContextの解放
+	 * @returns {void}
+	 */
+	releaseAudioContext() {
 		this.audioBuffer = null;
 		this.audioBufferTrackId = "";
-		if (this.audioContext) {
-			this.audioContext.close().catch(() => {});
+		this.masterGain = null;
+		const audioContext = this.audioContext;
+		this.audioContext = null;
+		if (audioContext && audioContext.state !== "closed") {
+			audioContext.close().catch(() => {});
 		}
 	}
 
@@ -380,8 +469,11 @@ class Ambientloop {
 			this.masterGain.gain.value = this.userVolume;
 			this.masterGain.connect(this.audioContext.destination);
 		}
-		if (this.audioContext.state === "suspended") {
+		if (this.audioContext.state !== "running") {
 			await this.audioContext.resume();
+		}
+		if (this.audioContext.state !== "running") {
+			throw new Error("AudioContext is not running.");
 		}
 	}
 
