@@ -301,8 +301,10 @@ class Ambientloop {
 			this.applyUserVolume();
 		});
 
-		document.addEventListener("visibilitychange", this.handleVisibilityChange);
-		window.addEventListener("pagehide", this.handlePageHide);
+		if (this.shouldSuspendOnPageHide()) {
+			document.addEventListener("visibilitychange", this.handleVisibilityChange);
+			window.addEventListener("pagehide", this.handlePageHide);
+		}
 	}
 
 	/**
@@ -417,6 +419,18 @@ class Ambientloop {
 		document.removeEventListener("visibilitychange", this.handleVisibilityChange);
 		window.removeEventListener("pagehide", this.handlePageHide);
 		this.releaseAudioContext();
+	}
+
+	/**
+	 * ページ非表示時の停止が必要な環境か判定
+	 * @returns {boolean}
+	 */
+	shouldSuspendOnPageHide() {
+		const hasCoarsePointer =
+			typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+		const userAgent = window.navigator.userAgent;
+		const isKnownMobile = /iPhone|iPad|iPod|Android/i.test(userAgent);
+		return hasCoarsePointer || isKnownMobile;
 	}
 
 	/**
