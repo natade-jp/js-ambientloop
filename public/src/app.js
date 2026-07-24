@@ -25,6 +25,12 @@ const FADE_SCHEDULE_OFFSET_SECONDS = 0.01;
 const PAGE_HIDE_FADE_SECONDS = 0.08;
 
 /**
+ * 手動停止時のフェードアウト秒
+ * @type {number}
+ */
+const MANUAL_STOP_FADE_SECONDS = 0.08;
+
+/**
  * BGM曲情報
  * @typedef {object} BgmTrack
  * @property {string} id 曲ID
@@ -265,7 +271,7 @@ class Ambientloop {
 	bindEvents() {
 		this.elements.playButton.addEventListener("click", async () => {
 			if (this.isPlaying) {
-				this.stop();
+				await this.stopWithFade();
 				return;
 			}
 			await this.play();
@@ -274,7 +280,11 @@ class Ambientloop {
 		this.elements.trackSelect.addEventListener("change", async () => {
 			const nextTrack = this.tracks.find((track) => track.id === this.elements.trackSelect.value) || null;
 			const shouldResume = this.isPlaying;
-			this.stop();
+			if (shouldResume) {
+				await this.stopWithFade();
+			} else {
+				this.stop();
+			}
 			this.selectedTrack = nextTrack;
 			if (nextTrack) {
 				this.saveText(`${this.storageKey}:trackId`, nextTrack.id);
@@ -312,6 +322,7 @@ class Ambientloop {
 
 		const generation = ++this.playGeneration;
 		try {
+			this.clearMessage();
 			Ambientloop.stopOtherPlayers(this);
 			await this.prepareAudioContext();
 			if (generation !== this.playGeneration) {
@@ -332,7 +343,6 @@ class Ambientloop {
 			const voice = this.createVoice(audioBuffer, 0, this.trackVolume(track), startTime);
 			await this.scheduleNextLoop(generation, track, voice);
 			this.elements.playButton.disabled = false;
-			this.clearMessage();
 			this.updateUi();
 		} catch (error) {
 			this.stop();
@@ -346,14 +356,53 @@ class Ambientloop {
 	 * @returns {void}
 	 */
 	stop() {
+		this.finishStop();
+	}
+
+	/**
+	 * フェードアウト付き停止
+	 * @returns {Promise<void>}
+	 */
+	async stopWithFade() {
+		if (!this.isPlaying || !this.audioContext || !this.masterGain) {
+			this.stop();
+			return;
+		}
+		this.elements.playButton.disabled = true;
+		this.elements.trackSelect.disabled = true;
+		this.beginStop();
+		this.fadeOutMasterGain(MANUAL_STOP_FADE_SECONDS);
+		await this.wait(MANUAL_STOP_FADE_SECONDS * 1000);
+		this.completeStop();
+	}
+
+	/**
+	 * 停止処理の開始
+	 * @returns {void}
+	 */
+	beginStop() {
 		this.playGeneration += 1;
 		this.isPlaying = false;
 		this.isCrossfading = false;
 		this.clearLoopTimeouts();
+	}
+
+	/**
+	 * 停止処理の完了
+	 * @returns {void}
+	 */
+	finishStop() {
+		this.beginStop();
+		this.completeStop();
+	}
+
+	/**
+	 * 停止処理の後始末
+	 * @returns {void}
+	 */
+	completeStop() {
 		this.stopVoices();
-		if (Ambientloop.activePlayer === this) {
-			Ambientloop.activePlayer = null;
-		}
+		this.clearActivePlayer();
 		this.elements.playButton.disabled = false;
 		this.updateUi();
 	}
@@ -379,21 +428,13 @@ class Ambientloop {
 			return;
 		}
 		this.isSuspendingForPageHide = true;
-		this.playGeneration += 1;
-		this.isPlaying = false;
-		this.isCrossfading = false;
-		this.clearLoopTimeouts();
+		this.beginStop();
 		this.fadeOutMasterGain(PAGE_HIDE_FADE_SECONDS);
 		this.setFallbackPageHideRelease();
 		window.setTimeout(() => {
-			this.stopVoices();
+			this.completeStop();
 			this.releaseAudioContext();
 			this.isSuspendingForPageHide = false;
-			if (Ambientloop.activePlayer === this) {
-				Ambientloop.activePlayer = null;
-			}
-			this.elements.playButton.disabled = false;
-			this.updateUi();
 		}, PAGE_HIDE_FADE_SECONDS * 1000);
 	}
 
@@ -406,7 +447,7 @@ class Ambientloop {
 			if (!this.isSuspendingForPageHide) {
 				return;
 			}
-			this.stopVoices();
+			this.completeStop();
 			this.releaseAudioContext();
 			this.isSuspendingForPageHide = false;
 		}, 500);
@@ -441,6 +482,27 @@ class Ambientloop {
 		if (audioContext && audioContext.state !== "closed") {
 			audioContext.close().catch(() => {});
 		}
+	}
+
+	/**
+	 * アクティブプレーヤーの解除
+	 * @returns {void}
+	 */
+	clearActivePlayer() {
+		if (Ambientloop.activePlayer === this) {
+			Ambientloop.activePlayer = null;
+		}
+	}
+
+	/**
+	 * 待機
+	 * @param {number} delayMs 待機ミリ秒
+	 * @returns {Promise<void>}
+	 */
+	wait(delayMs) {
+		return new Promise((resolve) => {
+			window.setTimeout(resolve, delayMs);
+		});
 	}
 
 	/**
