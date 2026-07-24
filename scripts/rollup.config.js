@@ -36,6 +36,6 @@ const name = "ambientloop";
 const input = "./public/src/app.js";
 const data = [];
 
-data.push(createData(name, input, "./public/js/app.min.js", "esm", true));
+data.push(createData(name, input, "./public/js/app.min.js", "umd", true));
 
 export default data;

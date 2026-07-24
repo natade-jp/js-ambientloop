@@ -7,7 +7,7 @@
 ## 特徴
 
 - Vanilla JavaScriptのみで動作
-- ES Modules形式の `app.js` をビルドして `public/js/app.min.js` を生成
+- ES Modules形式の `app.js` をRollupでUMD形式の `public/js/app.min.js` に変換
 - WordPressのカスタムHTMLウィジェットに設置しやすい小型UI
 - 登録済みの曲をセレクトボックスから選択
 - `loopStartMs` と `loopEndMs` による区間ループ
@@ -74,7 +74,7 @@ npm run build
 ビルド後のファイルを確認したい場合は、`public/index.html` の読み込みを以下のように切り替えます。
 
 ```html
-<script type="module" src="./js/app.min.js" charset="utf-8"></script>
+<script src="./js/app.min.js" charset="utf-8"></script>
 ```
 
 ## 基本的な設置方法
@@ -91,10 +91,10 @@ CSSとJavaScriptを読み込みます。
 
 ```html
 <link rel="stylesheet" href="./styles/app.css" />
-<script type="module" src="./js/app.min.js"></script>
+<script src="./js/app.min.js"></script>
 ```
 
-`app.js` は読み込み時に `[data-ambientloop]` を探し、プレーヤー内部のHTMLを自動生成します。
+`app.min.js` はUMD形式です。読み込み時に `[data-ambientloop]` を探し、プレーヤー内部のHTMLを自動生成します。
 
 ## WordPressでの使い方
 
@@ -127,19 +127,6 @@ add_action('wp_enqueue_scripts', function () {
 		true
 	);
 });
-```
-
-`app.min.js` をES Modules形式で出力した場合は、次のように登録してください。
-
-```php
-<?php
-	wp_enqueue_script_module(
-		'ambientloop',
-		home_url('/js-ambientloop/js/app.min.js'),
-		array(),
-		'0.0.1',
-		true
-	);
 ```
 
 カスタムHTMLウィジェットには以下だけを貼り付けます。
@@ -287,12 +274,11 @@ CSSは `.ambientloop` の内側に限定しており、サイト全体の `butto
 <div class="ambientloop" data-ambientloop></div>
 ```
 
-手動で生成する場合は、ES Moduleとして読み込んでください。
+手動で生成する場合は、`app.min.js` が公開する `window.ambientloop` から取得できます。
 
 ```javascript
-import { Ambientloop, tracks } from "./app.js";
-
 const element = document.querySelector("[data-ambientloop]");
+const { Ambientloop, tracks } = window.ambientloop;
 
 if (element instanceof HTMLElement) {
 	const player = new Ambientloop(element, {
