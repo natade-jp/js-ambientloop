@@ -11,7 +11,7 @@
 - WordPressのカスタムHTMLウィジェットに設置しやすい小型UI
 - 登録済みの曲をセレクトボックスから選択
 - `loopStartMs` と `loopEndMs` による区間ループ
-- 2系統の `HTMLAudioElement` と Web Audio API によるクロスフェード
+- `AudioBufferSourceNode` と Web Audio API による安定したクロスフェード
 - 曲ごとの基準音量と利用者の音量設定を掛け合わせて再生
 - 音量と最後に選択した曲を `localStorage` に保存
 - 曲の説明、作者、ライセンス、配布元リンクを開閉式で表示
@@ -23,7 +23,7 @@
 ambientloop/
 ├─ public/
 │  ├─ data/
-│  │  ├─ Calm.mp3
+│  │  ├─ Calm.m4a
 │  │  └─ Calm.txt
 │  ├─ index.html
 │  ├─ js/
@@ -159,11 +159,11 @@ const tracks = [
 	{
 		id: "calm",
 		title: "Calm",
-		src: "./data/Calm.mp3",
-		loopStartMs: 0,
-		loopEndMs: 23800,
-		crossfadeMs: 14150,
-		volume: 0.45,
+		src: "./data/Calm.m4a",
+		loopStartMs: 4773,
+		loopEndMs: 14319 + 100,
+		crossfadeMs: 100,
+		volume: 0.8,
 		description: "穏やかな雰囲気のBGM",
 		author: "Kamyu",
 		license: "DOVA-SYNDROME 音源利用ライセンス",
@@ -209,7 +209,7 @@ volume <= 1
 
 ## ループとクロスフェード
 
-`ambientloop` は、同じ音声ファイルを2つの `HTMLAudioElement` で用意し、交互に再生します。
+`ambientloop` は、選択中の曲を再生ボタン押下後に `fetch()` で読み込み、`decodeAudioData()` で `AudioBuffer` に変換してから再生します。ループごとに軽量な `AudioBufferSourceNode` を作り直し、Web Audio APIの時刻で次の再生開始と音量変化を予約します。
 
 再生ボタンを押した直後の初回再生は、音声ファイルの先頭 `0ms` から始まります。`loopEndMs` へ近づいた後の繰り返し再生では、次の音声を `loopStartMs` から再生します。
 
@@ -243,6 +243,8 @@ crossfadeMs: 2000
 ```
 
 `crossfadeMs` が `0` の場合はクロスフェードせず、`loopEndMs` に到達した時点で `loopStartMs` へ戻ります。
+
+音声ファイルの読み込みとデコードは選択中の曲だけに対して行います。複数曲をページ読み込み時にまとめてデコードすることはありません。
 
 ## 音量
 
@@ -305,7 +307,7 @@ player.destroy();
 
 M4Aは拡張子だけで再生可否が決まるわけではありません。内部コーデックやブラウザの実装に依存します。
 
-`ambientloop` では `canPlayType()` を使って、ブラウザが再生できる可能性を確認します。ただし、すべての環境で完全な再生を保証するものではありません。
+`ambientloop` では `canPlayType()` を使って、ブラウザが再生できる可能性を確認します。その後、再生ボタン押下時に `fetch()` と `decodeAudioData()` で音声を読み込みます。ただし、すべての環境で完全な再生を保証するものではありません。
 
 Web Audio APIの `AudioContext` は、ブラウザの自動再生制限に従うため、ページ読み込み時には開始しません。利用者が再生ボタンを押したタイミングで作成または再開します。
 

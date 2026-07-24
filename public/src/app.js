@@ -42,11 +42,12 @@ const FADE_SCHEDULE_OFFSET_SECONDS = 0.01;
  */
 
 /**
- * 音声系統
- * @typedef {object} AudioDeck
- * @property {HTMLAudioElement} audio 音声要素
- * @property {MediaElementAudioSourceNode | null} source 音声ソース
- * @property {GainNode | null} gain 音量ノード
+ * 再生中の音声ノード
+ * @typedef {object} PlaybackVoice
+ * @property {AudioBufferSourceNode} source 再生ノード
+ * @property {GainNode} gain 音量ノード
+ * @property {number} startTime 再生開始時刻
+ * @property {number} offsetMs 再生開始位置
  */
 
 /**
@@ -130,11 +131,14 @@ class Ambientloop {
 		this.tracks = Array.isArray(options.tracks) ? options.tracks.filter((track) => this.isValidTrack(track)) : [];
 		this.storageKey = options.storageKey || STORAGE_PREFIX;
 		this.audioContext = null;
-		this.decks = [this.createDeck(), this.createDeck()];
-		this.activeDeckIndex = 0;
+		this.audioBuffer = null;
+		this.audioBufferTrackId = "";
+		/** @type {PlaybackVoice[]} */
+		this.activeVoices = [];
+		/** @type {number[]} */
+		this.loopTimeoutIds = [];
 		this.isPlaying = false;
 		this.isCrossfading = false;
-		this.animationFrameId = 0;
 		this.playGeneration = 0;
 		this.userVolume = this.loadNumber(`${this.storageKey}:volume`, DEFAULT_USER_VOLUME);
 		this.selectedTrackId = this.loadText(`${this.storageKey}:trackId`);
@@ -151,21 +155,6 @@ class Ambientloop {
 	findInitialTrack() {
 		const savedTrack = this.tracks.find((track) => track.id === this.selectedTrackId);
 		return savedTrack || this.tracks[0] || null;
-	}
-
-	/**
-	 * 音声系統の生成
-	 * @returns {AudioDeck}
-	 */
-	createDeck() {
-		const audio = new Audio();
-		audio.preload = "auto";
-		audio.crossOrigin = "anonymous";
-		return {
-			audio,
-			source: null,
-			gain: null
-		};
 	}
 
 	/**
@@ -309,22 +298,22 @@ class Ambientloop {
 			if (generation !== this.playGeneration) {
 				return;
 			}
-			this.resetDecks(track);
-			this.setDeckGain(0, this.finalVolume(track));
-			this.setDeckGain(1, 0);
-			this.activeDeckIndex = 0;
-			this.isPlaying = true;
-			this.isCrossfading = false;
-			Ambientloop.activePlayer = this;
 			this.elements.playButton.disabled = true;
-			await this.startDeck(this.decks[0], 0);
+			const audioBuffer = await this.loadAudioBuffer(track);
 			if (generation !== this.playGeneration) {
 				return;
 			}
+			this.validateBufferDuration(track, audioBuffer);
+			this.stopVoices();
+			this.isPlaying = true;
+			this.isCrossfading = false;
+			Ambientloop.activePlayer = this;
+			const startTime = this.audioContext.currentTime + FADE_SCHEDULE_OFFSET_SECONDS;
+			const voice = this.createVoice(audioBuffer, 0, this.finalVolume(track), startTime);
+			await this.scheduleNextLoop(generation, track, voice);
 			this.elements.playButton.disabled = false;
 			this.clearMessage();
 			this.updateUi();
-			this.startLoopMonitor(generation);
 		} catch (error) {
 			this.stop();
 			this.showMessage("音声の再生を開始できませんでした。");
@@ -340,15 +329,8 @@ class Ambientloop {
 		this.playGeneration += 1;
 		this.isPlaying = false;
 		this.isCrossfading = false;
-		this.stopLoopMonitor();
-		this.decks.forEach((deck) => {
-			deck.audio.pause();
-			this.seekDeck(deck, this.selectedTrack ? this.selectedTrack.loopStartMs : 0);
-			if (deck.gain) {
-				deck.gain.gain.cancelScheduledValues(0);
-				deck.gain.gain.setValueAtTime(0, this.audioContext ? this.audioContext.currentTime : 0);
-			}
-		});
+		this.clearLoopTimeouts();
+		this.stopVoices();
 		if (Ambientloop.activePlayer === this) {
 			Ambientloop.activePlayer = null;
 		}
@@ -363,10 +345,8 @@ class Ambientloop {
 	destroy() {
 		this.stop();
 		this.root.textContent = "";
-		this.decks.forEach((deck) => {
-			deck.audio.removeAttribute("src");
-			deck.audio.load();
-		});
+		this.audioBuffer = null;
+		this.audioBufferTrackId = "";
 		if (this.audioContext) {
 			this.audioContext.close().catch(() => {});
 		}
@@ -394,13 +374,6 @@ class Ambientloop {
 		}
 		if (!this.audioContext) {
 			this.audioContext = new AudioContextClass();
-			this.decks.forEach((deck) => {
-				deck.source = this.audioContext.createMediaElementSource(deck.audio);
-				deck.gain = this.audioContext.createGain();
-				deck.gain.gain.value = 0;
-				deck.source.connect(deck.gain);
-				deck.gain.connect(this.audioContext.destination);
-			});
 		}
 		if (this.audioContext.state === "suspended") {
 			await this.audioContext.resume();
@@ -408,145 +381,147 @@ class Ambientloop {
 	}
 
 	/**
-	 * デッキの曲設定
+	 * 音声データの読込
 	 * @param {BgmTrack} track 曲情報
-	 * @returns {void}
+	 * @returns {Promise<AudioBuffer>}
 	 */
-	resetDecks(track) {
-		this.decks.forEach((deck) => {
-			deck.audio.pause();
-			if (deck.audio.src !== new URL(track.src, window.location.href).href) {
-				deck.audio.src = track.src;
-				deck.audio.load();
+	async loadAudioBuffer(track) {
+		if (this.audioBuffer && this.audioBufferTrackId === track.id) {
+			return this.audioBuffer;
+		}
+		if (!this.audioContext) {
+			throw new Error("AudioContext is not ready.");
+		}
+		const response = await window.fetch(track.src);
+		if (!response.ok) {
+			throw new Error(`Audio fetch failed: ${response.status}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		const audioBuffer = await this.decodeAudioData(arrayBuffer);
+		this.audioBuffer = audioBuffer;
+		this.audioBufferTrackId = track.id;
+		return audioBuffer;
+	}
+
+	/**
+	 * 音声データのデコード
+	 * @param {ArrayBuffer} arrayBuffer 音声データ
+	 * @returns {Promise<AudioBuffer>}
+	 */
+	decodeAudioData(arrayBuffer) {
+		if (!this.audioContext) {
+			return Promise.reject(new Error("AudioContext is not ready."));
+		}
+		return new Promise((resolve, reject) => {
+			const decodeResult = this.audioContext.decodeAudioData(arrayBuffer, resolve, reject);
+			if (decodeResult) {
+				decodeResult.then(resolve).catch(reject);
 			}
-			this.seekDeck(deck, track.loopStartMs);
 		});
 	}
 
 	/**
-	 * デッキ再生の開始
-	 * @param {AudioDeck} deck 音声系統
-	 * @param {number} startMs 開始位置
+	 * 音声長の検証
+	 * @param {BgmTrack} track 曲情報
+	 * @param {AudioBuffer} audioBuffer 音声データ
+	 * @returns {void}
+	 */
+	validateBufferDuration(track, audioBuffer) {
+		const durationMs = audioBuffer.duration * 1000;
+		if (track.loopEndMs > durationMs + 200) {
+			throw new Error("Loop end exceeds audio duration.");
+		}
+	}
+
+	/**
+	 * 音声ノードの作成
+	 * @param {AudioBuffer} audioBuffer 音声データ
+	 * @param {number} offsetMs 再生開始位置
+	 * @param {number} volume 音量
+	 * @param {number} startTime 再生開始時刻
+	 * @returns {PlaybackVoice}
+	 */
+	createVoice(audioBuffer, offsetMs, volume, startTime) {
+		if (!this.audioContext) {
+			throw new Error("AudioContext is not ready.");
+		}
+		const source = this.audioContext.createBufferSource();
+		const gain = this.audioContext.createGain();
+		source.buffer = audioBuffer;
+		gain.gain.setValueAtTime(this.clamp(volume, 0, 1), startTime);
+		source.connect(gain);
+		gain.connect(this.audioContext.destination);
+		source.start(startTime, Math.max(0, offsetMs / 1000));
+		const voice = {
+			source,
+			gain,
+			startTime,
+			offsetMs
+		};
+		this.activeVoices.push(voice);
+		source.onended = () => {
+			this.removeVoice(voice);
+		};
+		return voice;
+	}
+
+	/**
+	 * 次回ループの予約
+	 * @param {number} generation 再生世代
+	 * @param {BgmTrack} track 曲情報
+	 * @param {PlaybackVoice} currentVoice 現在の音声ノード
 	 * @returns {Promise<void>}
 	 */
-	async startDeck(deck, startMs) {
-		this.seekDeck(deck, startMs);
-		await deck.audio.play();
-	}
-
-	/**
-	 * デッキ位置の変更
-	 * @param {AudioDeck} deck 音声系統
-	 * @param {number} positionMs 再生位置
-	 * @returns {void}
-	 */
-	seekDeck(deck, positionMs) {
-		const positionSeconds = Math.max(0, positionMs / 1000);
-		try {
-			deck.audio.currentTime = positionSeconds;
-		} catch (_error) {}
-	}
-
-	/**
-	 * ループ監視の開始
-	 * @param {number} generation 再生世代
-	 * @returns {void}
-	 */
-	startLoopMonitor(generation) {
-		const monitor = () => {
-			if (!this.isPlaying || generation !== this.playGeneration || !this.selectedTrack) {
+	async scheduleNextLoop(generation, track, currentVoice) {
+		if (!this.audioContext || !this.audioBuffer || generation !== this.playGeneration) {
+			return;
+		}
+		const finalVolume = this.finalVolume(track);
+		const loopEndTime = currentVoice.startTime + (track.loopEndMs - currentVoice.offsetMs) / 1000;
+		const fadeStartTime =
+			track.crossfadeMs > 0
+				? currentVoice.startTime + (track.loopEndMs - track.crossfadeMs - currentVoice.offsetMs) / 1000
+				: loopEndTime;
+		if (fadeStartTime <= this.audioContext.currentTime) {
+			this.stop();
+			this.showMessage("ループ開始の予約が間に合いませんでした。");
+			return;
+		}
+		if (track.crossfadeMs > 0) {
+			const nextVoice = this.createVoice(this.audioBuffer, track.loopStartMs, 0, fadeStartTime);
+			this.scheduleEqualPowerFade(currentVoice.gain, finalVolume, 0, fadeStartTime, track.crossfadeMs / 1000);
+			this.scheduleEqualPowerFade(nextVoice.gain, 0, finalVolume, fadeStartTime, track.crossfadeMs / 1000);
+			currentVoice.source.stop(loopEndTime + FADE_SCHEDULE_OFFSET_SECONDS);
+			this.setLoopTimeout(() => {
+				if (generation === this.playGeneration) {
+					this.isCrossfading = true;
+				}
+			}, fadeStartTime);
+			this.setLoopTimeout(() => {
+				if (generation !== this.playGeneration) {
+					return;
+				}
+				this.isCrossfading = false;
+				this.scheduleNextLoop(generation, track, nextVoice).catch((error) => {
+					this.stop();
+					this.showMessage("ループ再生中に問題が発生しました。");
+					console.error(error);
+				});
+			}, loopEndTime);
+			return;
+		}
+		const nextVoice = this.createVoice(this.audioBuffer, track.loopStartMs, finalVolume, loopEndTime);
+		currentVoice.source.stop(loopEndTime + FADE_SCHEDULE_OFFSET_SECONDS);
+		this.setLoopTimeout(() => {
+			if (generation !== this.playGeneration) {
 				return;
 			}
-			this.checkLoop(generation).catch((error) => {
+			this.scheduleNextLoop(generation, track, nextVoice).catch((error) => {
 				this.stop();
 				this.showMessage("ループ再生中に問題が発生しました。");
 				console.error(error);
 			});
-			this.animationFrameId = window.requestAnimationFrame(monitor);
-		};
-		this.stopLoopMonitor();
-		this.animationFrameId = window.requestAnimationFrame(monitor);
-	}
-
-	/**
-	 * ループ監視の停止
-	 * @returns {void}
-	 */
-	stopLoopMonitor() {
-		if (this.animationFrameId) {
-			window.cancelAnimationFrame(this.animationFrameId);
-			this.animationFrameId = 0;
-		}
-	}
-
-	/**
-	 * ループ状態の確認
-	 * @param {number} generation 再生世代
-	 * @returns {Promise<void>}
-	 */
-	async checkLoop(generation) {
-		const track = this.selectedTrack;
-		if (!track || this.isCrossfading) {
-			return;
-		}
-
-		const activeDeck = this.decks[this.activeDeckIndex];
-		const currentMs = activeDeck.audio.currentTime * 1000;
-		if (Number.isFinite(activeDeck.audio.duration)) {
-			const durationMs = activeDeck.audio.duration * 1000;
-			if (track.loopEndMs > durationMs + 200) {
-				this.stop();
-				this.showMessage("ループ終了位置が音声の長さを超えています。");
-				return;
-			}
-		}
-
-		const crossfadeStartMs = track.loopEndMs - track.crossfadeMs;
-		if (track.crossfadeMs > 0 && currentMs >= crossfadeStartMs) {
-			await this.crossfade(generation, track);
-			return;
-		}
-		if (track.crossfadeMs === 0 && currentMs >= track.loopEndMs) {
-			this.seekDeck(activeDeck, track.loopStartMs);
-		}
-	}
-
-	/**
-	 * クロスフェードの実行
-	 * @param {number} generation 再生世代
-	 * @param {BgmTrack} track 曲情報
-	 * @returns {Promise<void>}
-	 */
-	async crossfade(generation, track) {
-		if (!this.audioContext) {
-			return;
-		}
-		this.isCrossfading = true;
-		const currentIndex = this.activeDeckIndex;
-		const nextIndex = currentIndex === 0 ? 1 : 0;
-		const currentDeck = this.decks[currentIndex];
-		const nextDeck = this.decks[nextIndex];
-		const finalVolume = this.finalVolume(track);
-		const now = this.audioContext.currentTime + FADE_SCHEDULE_OFFSET_SECONDS;
-		const duration = track.crossfadeMs / 1000;
-		this.setDeckGain(nextIndex, 0);
-		await this.startDeck(nextDeck, track.loopStartMs);
-		if (generation !== this.playGeneration) {
-			return;
-		}
-		this.scheduleEqualPowerFade(currentDeck.gain, finalVolume, 0, now, duration);
-		this.scheduleEqualPowerFade(nextDeck.gain, 0, finalVolume, now, duration);
-		window.setTimeout(() => {
-			if (generation !== this.playGeneration) {
-				return;
-			}
-			currentDeck.audio.pause();
-			this.seekDeck(currentDeck, track.loopStartMs);
-			this.setDeckGain(currentIndex, 0);
-			this.setDeckGain(nextIndex, finalVolume);
-			this.activeDeckIndex = nextIndex;
-			this.isCrossfading = false;
-		}, track.crossfadeMs + 80);
+		}, loopEndTime);
 	}
 
 	/**
@@ -574,6 +549,58 @@ class Ambientloop {
 	}
 
 	/**
+	 * ループタイマーの予約
+	 * @param {() => void} callback 処理
+	 * @param {number} targetTime 実行時刻
+	 * @returns {void}
+	 */
+	setLoopTimeout(callback, targetTime) {
+		if (!this.audioContext) {
+			return;
+		}
+		const delayMs = Math.max(0, (targetTime - this.audioContext.currentTime) * 1000);
+		const timeoutId = window.setTimeout(() => {
+			this.loopTimeoutIds = this.loopTimeoutIds.filter((id) => id !== timeoutId);
+			callback();
+		}, delayMs);
+		this.loopTimeoutIds.push(timeoutId);
+	}
+
+	/**
+	 * ループタイマーの解除
+	 * @returns {void}
+	 */
+	clearLoopTimeouts() {
+		this.loopTimeoutIds.forEach((timeoutId) => {
+			window.clearTimeout(timeoutId);
+		});
+		this.loopTimeoutIds = [];
+	}
+
+	/**
+	 * 音声ノードの停止
+	 * @returns {void}
+	 */
+	stopVoices() {
+		this.activeVoices.forEach((voice) => {
+			voice.gain.gain.cancelScheduledValues(0);
+			try {
+				voice.source.stop();
+			} catch (_error) {}
+		});
+		this.activeVoices = [];
+	}
+
+	/**
+	 * 音声ノードの削除
+	 * @param {PlaybackVoice} voice 音声ノード
+	 * @returns {void}
+	 */
+	removeVoice(voice) {
+		this.activeVoices = this.activeVoices.filter((activeVoice) => activeVoice !== voice);
+	}
+
+	/**
 	 * 現在音量の適用
 	 * @returns {void}
 	 */
@@ -582,26 +609,16 @@ class Ambientloop {
 			return;
 		}
 		const finalVolume = this.finalVolume(this.selectedTrack);
-		this.decks.forEach((deck, index) => {
-			if (index === this.activeDeckIndex && this.isPlaying && !this.isCrossfading) {
-				this.setDeckGain(index, finalVolume);
-			}
-		});
-	}
-
-	/**
-	 * デッキ音量の設定
-	 * @param {number} index デッキ番号
-	 * @param {number} volume 音量
-	 * @returns {void}
-	 */
-	setDeckGain(index, volume) {
-		const deck = this.decks[index];
-		if (!deck.gain || !this.audioContext) {
+		if (!this.audioContext || !this.isPlaying || this.isCrossfading) {
 			return;
 		}
-		deck.gain.gain.cancelScheduledValues(0);
-		deck.gain.gain.setValueAtTime(this.clamp(volume, 0, 1), this.audioContext.currentTime);
+		this.activeVoices.forEach((voice) => {
+			if (voice.startTime > this.audioContext.currentTime) {
+				return;
+			}
+			voice.gain.gain.cancelScheduledValues(0);
+			voice.gain.gain.setValueAtTime(finalVolume, this.audioContext.currentTime);
+		});
 	}
 
 	/**
