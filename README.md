@@ -112,18 +112,16 @@ your-child-theme/
 ```php
 <?php
 add_action('wp_enqueue_scripts', function () {
-	$theme_uri = get_stylesheet_directory_uri();
-
 	wp_enqueue_style(
 		'ambientloop',
-		$theme_uri . '/ambientloop/app.css',
+		home_url('/js-ambientloop/styles/app.css'),
 		array(),
 		'0.0.1'
 	);
 
 	wp_enqueue_script(
 		'ambientloop',
-		$theme_uri . '/ambientloop/app.min.js',
+		home_url('/js-ambientloop/js/app.min.js'),
 		array(),
 		'0.0.1',
 		true
@@ -131,17 +129,17 @@ add_action('wp_enqueue_scripts', function () {
 });
 ```
 
-`app.min.js` はES Modules形式です。テーマやWordPressの出力に合わせて、必要な場合は `script` タグへ `type="module"` を付与してください。
+`app.min.js` をES Modules形式で出力した場合は、次のように登録してください。
 
 ```php
 <?php
-add_filter('script_loader_tag', function ($tag, $handle, $src) {
-	if ($handle !== 'ambientloop') {
-		return $tag;
-	}
-
-	return '<script type="module" src="' . esc_url($src) . '"></script>';
-}, 10, 3);
+	wp_enqueue_script_module(
+		'ambientloop',
+		home_url('/js-ambientloop/js/app.min.js'),
+		array(),
+		'0.0.1',
+		true
+	);
 ```
 
 カスタムHTMLウィジェットには以下だけを貼り付けます。
