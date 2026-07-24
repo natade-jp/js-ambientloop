@@ -90,7 +90,7 @@ const tracks = [
 		loopStartMs: 9895,
 		loopEndMs: 99867,
 		crossfadeMs: 3000,
-		volume: 0.5,
+		volume: 0.25,
 		author: "ハシマミ",
 		sourceUrl: "https://hashimamiweb.com/freebgm-sokoniiru/"
 	},
@@ -101,7 +101,7 @@ const tracks = [
 		loopStartMs: 587,
 		loopEndMs: 132048,
 		crossfadeMs: 10,
-		volume: 0.8,
+		volume: 0.6,
 		author: "甘茶",
 		sourceUrl: "https://amachamusic.chagasi.com/music_norowaretapiano.html"
 	},
@@ -112,7 +112,7 @@ const tracks = [
 		loopStartMs: 4773,
 		loopEndMs: 14319 + 100,
 		crossfadeMs: 100,
-		volume: 0.8,
+		volume: 0.6,
 		description: "穏やかな雰囲気のBGM",
 		author: "Kamyu",
 		license: "DOVA-SYNDROME 音源利用ライセンス",
