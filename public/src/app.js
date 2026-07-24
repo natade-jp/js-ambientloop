@@ -131,6 +131,7 @@ class Ambientloop {
 		this.tracks = Array.isArray(options.tracks) ? options.tracks.filter((track) => this.isValidTrack(track)) : [];
 		this.storageKey = options.storageKey || STORAGE_PREFIX;
 		this.audioContext = null;
+		this.masterGain = null;
 		this.audioBuffer = null;
 		this.audioBufferTrackId = "";
 		/** @type {PlaybackVoice[]} */
@@ -272,7 +273,7 @@ class Ambientloop {
 		this.elements.volumeInput.addEventListener("input", () => {
 			this.userVolume = this.clamp(Number(this.elements.volumeInput.value), 0, 1);
 			this.saveNumber(`${this.storageKey}:volume`, this.userVolume);
-			this.applyCurrentVolume();
+			this.applyUserVolume();
 		});
 	}
 
@@ -308,8 +309,9 @@ class Ambientloop {
 			this.isPlaying = true;
 			this.isCrossfading = false;
 			Ambientloop.activePlayer = this;
+			this.applyUserVolume();
 			const startTime = this.audioContext.currentTime + FADE_SCHEDULE_OFFSET_SECONDS;
-			const voice = this.createVoice(audioBuffer, 0, this.finalVolume(track), startTime);
+			const voice = this.createVoice(audioBuffer, 0, this.trackVolume(track), startTime);
 			await this.scheduleNextLoop(generation, track, voice);
 			this.elements.playButton.disabled = false;
 			this.clearMessage();
@@ -374,6 +376,9 @@ class Ambientloop {
 		}
 		if (!this.audioContext) {
 			this.audioContext = new AudioContextClass();
+			this.masterGain = this.audioContext.createGain();
+			this.masterGain.gain.value = this.userVolume;
+			this.masterGain.connect(this.audioContext.destination);
 		}
 		if (this.audioContext.state === "suspended") {
 			await this.audioContext.resume();
@@ -450,7 +455,7 @@ class Ambientloop {
 		source.buffer = audioBuffer;
 		gain.gain.setValueAtTime(this.clamp(volume, 0, 1), startTime);
 		source.connect(gain);
-		gain.connect(this.audioContext.destination);
+		gain.connect(this.masterGain || this.audioContext.destination);
 		source.start(startTime, Math.max(0, offsetMs / 1000));
 		const voice = {
 			source,
@@ -476,7 +481,7 @@ class Ambientloop {
 		if (!this.audioContext || !this.audioBuffer || generation !== this.playGeneration) {
 			return;
 		}
-		const finalVolume = this.finalVolume(track);
+		const trackVolume = this.trackVolume(track);
 		const loopEndTime = currentVoice.startTime + (track.loopEndMs - currentVoice.offsetMs) / 1000;
 		const fadeStartTime =
 			track.crossfadeMs > 0
@@ -489,8 +494,8 @@ class Ambientloop {
 		}
 		if (track.crossfadeMs > 0) {
 			const nextVoice = this.createVoice(this.audioBuffer, track.loopStartMs, 0, fadeStartTime);
-			this.scheduleEqualPowerFade(currentVoice.gain, finalVolume, 0, fadeStartTime, track.crossfadeMs / 1000);
-			this.scheduleEqualPowerFade(nextVoice.gain, 0, finalVolume, fadeStartTime, track.crossfadeMs / 1000);
+			this.scheduleEqualPowerFade(currentVoice.gain, trackVolume, 0, fadeStartTime, track.crossfadeMs / 1000);
+			this.scheduleEqualPowerFade(nextVoice.gain, 0, trackVolume, fadeStartTime, track.crossfadeMs / 1000);
 			currentVoice.source.stop(loopEndTime + FADE_SCHEDULE_OFFSET_SECONDS);
 			this.setLoopTimeout(() => {
 				if (generation === this.playGeneration) {
@@ -510,7 +515,7 @@ class Ambientloop {
 			}, loopEndTime);
 			return;
 		}
-		const nextVoice = this.createVoice(this.audioBuffer, track.loopStartMs, finalVolume, loopEndTime);
+		const nextVoice = this.createVoice(this.audioBuffer, track.loopStartMs, trackVolume, loopEndTime);
 		currentVoice.source.stop(loopEndTime + FADE_SCHEDULE_OFFSET_SECONDS);
 		this.setLoopTimeout(() => {
 			if (generation !== this.playGeneration) {
@@ -601,33 +606,24 @@ class Ambientloop {
 	}
 
 	/**
-	 * 現在音量の適用
+	 * 利用者音量の適用
 	 * @returns {void}
 	 */
-	applyCurrentVolume() {
-		if (!this.selectedTrack) {
+	applyUserVolume() {
+		if (!this.audioContext || !this.masterGain) {
 			return;
 		}
-		const finalVolume = this.finalVolume(this.selectedTrack);
-		if (!this.audioContext || !this.isPlaying || this.isCrossfading) {
-			return;
-		}
-		this.activeVoices.forEach((voice) => {
-			if (voice.startTime > this.audioContext.currentTime) {
-				return;
-			}
-			voice.gain.gain.cancelScheduledValues(0);
-			voice.gain.gain.setValueAtTime(finalVolume, this.audioContext.currentTime);
-		});
+		this.masterGain.gain.cancelScheduledValues(0);
+		this.masterGain.gain.setValueAtTime(this.userVolume, this.audioContext.currentTime);
 	}
 
 	/**
-	 * 最終音量の取得
+	 * 曲の内部音量の取得
 	 * @param {BgmTrack} track 曲情報
 	 * @returns {number}
 	 */
-	finalVolume(track) {
-		return this.clamp(track.volume * this.userVolume, 0, 1);
+	trackVolume(track) {
+		return this.clamp(track.volume, 0, 1);
 	}
 
 	/**
